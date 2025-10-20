@@ -13,6 +13,9 @@ class MyTestCase(unittest.TestCase):
     def test_make_full(self):
         np.testing.assert_array_equal(make_full(4, 2), [[0, 0], [0, 1], [1, 0], [1, 1]])
 
+    def test_make_full1(self):
+        np.testing.assert_array_equal(make_full(4, 2, 1), [[0, 0], [0, 1], [1, 0], [1, 1]])
+
     def test_fill_from_constraints2(self):
         ... # make some more of these
 
@@ -34,12 +37,12 @@ class MyTestCase(unittest.TestCase):
 
     def test_random(self):
         # make sure random completes in n cycles
-        def test_random_with_constraints(self):
-            # make sure its less than the worst case scenario
+        # make sure its less than the worst case scenario
             detectors = 3
             bottles = 2 ** 3
             self.assertEqual(next(iter(run([Random], detectors, bottles).values())),
                                bottles)
+        # test all permutations?
 
     def test_random_with_constraints(self):
         # make sure its less than the worst case scenario

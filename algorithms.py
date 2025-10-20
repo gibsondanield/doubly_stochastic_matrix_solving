@@ -1,6 +1,11 @@
+import math
+
 import numpy as np
 import pandas as pd
 from abc import ABC
+from permutation import Permutation
+import math
+import itertools
 
 
 def make_empty(n_rows,n_cols):
@@ -8,10 +13,25 @@ def make_empty(n_rows,n_cols):
     return df
 
 
-def make_full(n_rows,n_cols):
+def make_full(n_rows,n_cols,order=0):
     df = pd.DataFrame([[i // (2**n) % 2 for i in range(n_rows)] for n in range(n_cols)]).T
+    if order:
+        n = math.factorial(n_rows)
+        print(n, 'possible permutations')
+        # get seed in range
+        order = order % n
+        # use the order as the Lehmer code to get a unique permutation
+        row_order = Permutation.from_lehmer(order, n_rows).to_image(n_rows)
+        # make it 0 indexed
+        row_order = np.subtract(row_order,1)
+        df = df.iloc[row_order].reset_index(drop=True)
     return df
 
+def permutation_generator(n_rows, n_cols):
+    # faster for generating all permutations
+    df = pd.DataFrame([[i // (2 ** n) % 2 for i in range(n_rows)] for n in range(n_cols)]).T
+    for row_order in itertools.permutations(range(n_rows)):
+        return df.iloc[row_order].reset_index(drop=True)
 
 def fill_from_constraints(col_zeros, matrix):
     new_matrix = matrix.copy()
@@ -89,15 +109,26 @@ class RandomWithConstraintSolving(Random):
         self._update_remaining()
 
 
-class EntropyComputer(RandomWithConstraintSolving):
+class GreedMaxExpEntropy(RandomWithConstraintSolving):
     ''' has modes of max expected info gain, and max min info gain'''
     def next(self):
-        # store the two possiblieies for the chosen state, because one of them will be correct
+        # store the two possibles for the chosen state, because one of them will be correct
         # calculates entropy for each of the two possible measurement outcomes for each unknown
         ...
 
-class EntropyWithHeuristcs:
-    pass
+    def _decision(self,low_info_gain, high_info_gain):
+
+        return (low_info_gain + high_info_gain).idxmax()
+
+class GreedyMaxMinEntropy(GreedMaxExpEntropy):
+    def _decision(self,low_info_gain, high_info_gain):
+        # return the location of the highest low info gain
+        return low_info_gain.idxmax()
+
+class GreedyMaxEntropy(GreedMaxExpEntropy):
+    def _decision(self,low_info_gain, high_info_gain):
+        # return the location of the highest low info gain
+        return high_info_gain.idxmax()
 
 
 

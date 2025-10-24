@@ -1,5 +1,4 @@
 import unittest
-
 from main import *
 
 
@@ -14,7 +13,7 @@ class MyTestCase(unittest.TestCase):
         np.testing.assert_array_equal(make_full(4, 2, 1), [[0, 0], [0, 1], [1, 0], [1, 1]])
 
     def test_fill_from_constraints2(self):
-        ... # make some more of these
+        ...  # make some more of these
 
     def test_fill_from_constraints(self):
         arr = make_full(4, 2)
@@ -35,32 +34,38 @@ class MyTestCase(unittest.TestCase):
     def test_random(self):
         # make sure random completes in n cycles
         # make sure its less than the worst case scenario
-            detectors = 3
-            bottles = 2 ** 3
-            self.assertEqual(next(iter(run([Random], detectors, bottles).values())),
-                               bottles)
-        # test all permutations?
+        detectors = 3
+        bottles = 2 ** 3
+        self.assertEqual(next(iter(run([Random], detectors, bottles).values())),
+                         bottles)
+
+    # test all permutations?
 
     def test_random_with_constraints(self):
-        # make sure its less than the worst case scenario
-        detectors=3
-        bottles=2**3
-        self.assertGreater(next(iter(run([RandomWithConstraintSolving],detectors, bottles).values())),   bottles-detectors)
+        # make sure its less than the worst case scenario which is where each column gets only one for free
+        detectors = 3
+        bottles = 2 ** 3
+        self.assertGreater(next(iter(run([RandomWithConstraintSolving], detectors, bottles).values())),
+                           bottles - detectors)
 
     def test_solve_probability_matrix(self):
         p = pd.DataFrame(index=list(range(4)), columns=list(range(4)))
         p.iloc[0, 2] = 0
         p.iloc[0, 3] = 0
         ans = solve_probability_matrix(p)
-        expected = [[.5, .5, 0, 0], [1/6,1/6,1/3,1/3], [1/6,1/6,1/3,1/3], [1/6,1/6,1/3,1/3]]
+        expected = [[.5, .5, 0, 0], [1 / 6, 1 / 6, 1 / 3, 1 / 3], [1 / 6, 1 / 6, 1 / 3, 1 / 3],
+                    [1 / 6, 1 / 6, 1 / 3, 1 / 3]]
         np.testing.assert_array_almost_equal(ans.values, expected)
+
     def solve_overspecified(self):
-        a=[
+        a = [
             [2, 1, 0],
             [0, 1, 0],
             [0, 1, 1],
             [0, 1, 1],
         ]
         b = [2, 1, 2]
+
+
 if __name__ == '__main__':
     unittest.main()

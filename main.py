@@ -1,6 +1,4 @@
-import numpy as np
 from algorithms import *
-import pandas as pd
 
 
 class Cellar:
@@ -20,11 +18,6 @@ class Cellar:
     def reset(self):
         self.measurements=0
 
-def entropy(m):
-    return - m * np.log2(m)
-
-def compute_entropy(m):
-    return entropy(m).sum().sum()
 
 def run(methods, detectors, bottles):
     cellar = Cellar(detectors)

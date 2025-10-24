@@ -1,5 +1,6 @@
 import math
 
+import numpy
 import numpy as np
 import pandas as pd
 from abc import ABC
@@ -108,13 +109,94 @@ class RandomWithConstraintSolving(Random):
         self.arr = fill_from_constraints(self.col_zeros, self.arr)
         self._update_remaining()
 
+def init_probability_matrix(arr):
+    p = pd.DataFrame(index = arr.index, columns = arr.index)
+    for i, row in arr.iterrows():
+        binary = str(bin(i))[2:]
+        for b, j in zip(binary, row):
+            # if bottle is incompatible with measurement, set probability to 0
+            if pd.notna(j) and int(b) != j:
+                p[i][j] = 0
+    return p
+
+
+
+def solve_probability_matrix(p):
+    '''p is our doubly stochastic matrix'''
+
+    # aggregate to make block matrix
+    row_agg = p.groupby(list(p.columns), dropna=False).apply(lambda x: frozenset(x.index))
+    unique_rows = pd.DataFrame(row_agg.index.to_list()).T
+    col_agg = unique_rows.groupby(list(unique_rows.columns), dropna=False).apply(lambda x: frozenset(x.index))
+    eqn = pd.DataFrame(col_agg.index.to_list(), columns=row_agg.iloc[col_agg.index.names].values, index =col_agg.values).T
+
+    # make cols out of unknowns, where the column labels represent the original row and col indices
+    eqn_stacked = eqn.stack(dropna=False)
+    unknown_indices = eqn_stacked.index[eqn_stacked.isnull()]
+    equation_indices = eqn.index.tolist() + eqn.columns.tolist()
+    # make matrix A and vector b to form linear equation system.
+    a = pd.DataFrame([[ai in ac for ac in unknown_indices] for ai in equation_indices],columns=unknown_indices, index=equation_indices, dtype=int)
+    # because we aggregated the rows, and they originally sum to one, we need to count the number of rows that were added
+    b = a.index.map(len)
+
+    # solve ax = b
+    x = solve_overspecified(a, b)
+    # fill unknowns back in
+    for (rows, cols), value in zip(unknown_indices, x):
+        # reverse operations by dividing by number of rows and cols that were combined in the groupby operation
+        normalized_value = value / (len(rows)*len(cols))
+        for r in rows:
+            for c in cols:
+                p[c][r] = normalized_value
+
+    # make sure rows and cols sum to 1
+    assert (p.sum() == 1).all()
+    assert (p.sum(1) == 1).all()
+    return p
+
+from sympy import Matrix, linsolve
+def solve_overspecified(A, b):
+    # convert to sympy matrices
+    A = Matrix(A)
+    b = Matrix(b)
+    sol = linsolve((A, b))
+    print("Solution:", sol)
+    if len(sol) != 1:
+        raise ValueError(f'not one solution {sol}')
+    return sol.args[0]
 
 class GreedMaxExpEntropy(RandomWithConstraintSolving):
     ''' has modes of max expected info gain, and max min info gain'''
+    def __init__(self, n_bottles, n_detectors):
+        super().__init__(n_bottles, n_detectors)
+        # initialize probability matrix to have uniform priors
+        self.probability_matrix = init_probability_matrix(self.arr)
+
+
+
+
     def next(self):
-        # store the two possibles for the chosen state, because one of them will be correct
+        high_entropy_measurements = pd.DataFrame(np.nan, index=self.arr.index, columns=self.arr.columns)
+        low_entropy_measurements = pd.DataFrame(np.nan, index=self.arr.index, columns=self.arr.columns)
         # calculates entropy for each of the two possible measurement outcomes for each unknown
-        ...
+        for bottle, detector in self.remaining:
+            # calculate hypothetical measurement result
+            entropies = []
+            for measurement_result in 0,1:
+                temp_arr = self.arr.copy()
+                temp_arr.loc[bottle, detector] = measurement_result
+                # calculate probabilities
+                temp_p = solve_probability_matrix(temp_arr)
+                # calculate entropy
+                entropies.append(compute_matrix_entropy(temp_p))
+
+            # update high_entropy_measurements
+            high_entropy_measurements.loc[bottle, detector] = max(entropies)
+            # update low_entropy_measurements
+            low_entropy_measurements.loc[bottle, detector] = min(entropies)
+
+        return self._decision(low_entropy_measurements, high_entropy_measurements)
+
 
     def _decision(self,low_info_gain, high_info_gain):
 
@@ -131,4 +213,9 @@ class GreedyMaxEntropy(GreedMaxExpEntropy):
         return high_info_gain.idxmax()
 
 
+def entropy(m):
+    return - m * np.log2(m)
 
+
+def compute_matrix_entropy(m: pd.DataFrame):
+    return entropy(m.astype(float)).sum().sum()

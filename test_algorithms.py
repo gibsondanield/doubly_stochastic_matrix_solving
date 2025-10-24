@@ -1,8 +1,5 @@
 import unittest
-import numpy as np
-import pandas as pd
 
-from algorithms import *
 from main import *
 
 
@@ -26,11 +23,11 @@ class MyTestCase(unittest.TestCase):
 
     def test_entropy_full(self):
         for n in range(2, 10):
-            self.assertEqual(compute_entropy(make_full(2 ** n, n)), 0)
+            self.assertEqual(compute_matrix_entropy(make_full(2 ** n, n)), 0)
 
     def test_entropy_naive(self):
         for n in range(2, 10):
-            self.assertEqual(compute_entropy(make_empty(2 ** n, n).astype(float).fillna(.5)), n * 2 ** n)
+            self.assertEqual(compute_matrix_entropy(make_empty(2 ** n, n).astype(float).fillna(.5)), n * 2 ** n)
 
     def test_entropy(self):
         self.assertEqual(entropy(.5), 1)
@@ -50,5 +47,20 @@ class MyTestCase(unittest.TestCase):
         bottles=2**3
         self.assertGreater(next(iter(run([RandomWithConstraintSolving],detectors, bottles).values())),   bottles-detectors)
 
+    def test_solve_probability_matrix(self):
+        p = pd.DataFrame(index=list(range(4)), columns=list(range(4)))
+        p.iloc[0, 2] = 0
+        p.iloc[0, 3] = 0
+        ans = solve_probability_matrix(p)
+        expected = [[.5, .5, 0, 0], [1/6,1/6,1/3,1/3], [1/6,1/6,1/3,1/3], [1/6,1/6,1/3,1/3]]
+        np.testing.assert_array_almost_equal(ans.values, expected)
+    def solve_overspecified(self):
+        a=[
+            [2, 1, 0],
+            [0, 1, 0],
+            [0, 1, 1],
+            [0, 1, 1],
+        ]
+        b = [2, 1, 2]
 if __name__ == '__main__':
     unittest.main()

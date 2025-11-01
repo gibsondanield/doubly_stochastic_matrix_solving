@@ -42,7 +42,7 @@ if __name__ == '__main__':
     bottles = 2**detectors
     methods = [
                 Random,
-               RandomWithConstraintSolving] # random, max exp ent, max min ent,
+               RandomWithConstraintSolving, GreedyMaxExpEntropy] # random, max exp ent, max min ent,
     run(methods, detectors, bottles)
 
 '''

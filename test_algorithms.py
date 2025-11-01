@@ -1,6 +1,15 @@
 import unittest
+
+import pandas as pd
+from inequality_solving import *
 from main import *
 
+def brute_force_vs_calculation(arr):
+    pr = binary_to_probability_matrix(arr)
+    p1 = solve_probability_matrix(pr)
+    p = brute_force_probabilities(arr)
+    print(p)
+    np.testing.assert_array_almost_equal(p, p1)
 
 class MyTestCase(unittest.TestCase):
     def test_make_empty(self):
@@ -53,9 +62,89 @@ class MyTestCase(unittest.TestCase):
         p.iloc[0, 2] = 0
         p.iloc[0, 3] = 0
         ans = solve_probability_matrix(p)
-        expected = [[.5, .5, 0, 0], [1 / 6, 1 / 6, 1 / 3, 1 / 3], [1 / 6, 1 / 6, 1 / 3, 1 / 3],
+        expected = [[.5, .5, 0, 0],
+                    [1 / 6, 1 / 6, 1 / 3, 1 / 3],
+                    [1 / 6, 1 / 6, 1 / 3, 1 / 3],
                     [1 / 6, 1 / 6, 1 / 3, 1 / 3]]
         np.testing.assert_array_almost_equal(ans.values, expected)
+
+    def test_brute_force_probabilities(self):
+        arr = make_empty(4,2)
+        arr.loc[0,1] = False
+        p = brute_force_probabilities(arr)
+        expected = [[.5, .5, 0, 0],
+                    [1 / 6, 1 / 6, 1 / 3, 1 / 3],
+                    [1 / 6, 1 / 6, 1 / 3, 1 / 3],
+                    [1 / 6, 1 / 6, 1 / 3, 1 / 3]]
+        np.testing.assert_array_almost_equal(p.values, expected)
+
+    def test_brute_force_probabilities3(self):
+        arr = make_empty(8,3)
+        arr.loc[0,1] = False
+        arr.loc[1,2] = False
+        pr = binary_to_probability_matrix(arr)
+        p1 = solve_probability_matrix(pr)
+        p = brute_force_probabilities(arr)
+        print(p)
+
+    def test_brute_force_probabilities2(self):
+        # can be solved with constraints
+        arr = make_empty(8,3)
+        arr.loc[0,1] = False
+        arr.loc[0,2] = False
+        arr.loc[1,1] = False
+        arr.loc[1,2] = False
+        arr.loc[2,1] = False
+        # automorphism makes this unsolvable without increasing rank
+
+
+    def test_brute_force_probabilities6(self):
+        arr = make_empty(8,3)
+        arr.loc[0,1] = False
+        arr.loc[1,2] = False
+        arr.loc[2,0] = False
+        pr = binary_to_probability_matrix(arr)
+        p1 = solve_probability_matrix(pr)
+        p = brute_force_probabilities(arr)
+        print(p)
+
+    def test_brute_force_probabilities4(self):
+        arr = make_empty(8,3)
+        arr.loc[0,1] = False
+        arr.loc[1,2] = False
+        arr.loc[2,0] = False
+        arr.loc[3,0] = False
+        arr.loc[4,1] = False
+        arr.loc[5,2] = False
+        pr = binary_to_probability_matrix(arr)
+        p1 = solve_probability_matrix(pr)
+        p = brute_force_probabilities(arr)
+        print(p)
+        ...
+    def test_brute_force_probabilities5(self):
+        arr = make_empty(8,3)
+        arr.loc[0,1] = False
+        arr.loc[1,2] = False
+        arr.loc[2,0] = False
+        arr.loc[3,0] = False
+        arr.loc[4,1] = False
+        arr.loc[5,2] = False
+        arr.loc[6,0] = True
+        arr.loc[7,1] = True
+        pr = binary_to_probability_matrix(arr)
+        p1 = solve_probability_matrix(pr)
+        p = brute_force_probabilities(arr)
+        print(p)
+        print(p1)
+        ...
+
+    def test_probability_matrix_to_binary_probabilties(self):
+        p = pd.DataFrame([[.5, .5, 0, 0],
+                    [1 / 6, 1 / 6, 1 / 3, 1 / 3],
+                    [1 / 6, 1 / 6, 1 / 3, 1 / 3],
+                    [1 / 6, 1 / 6, 1 / 3, 1 / 3]])
+        binary = probability_matrix_to_binary_probabilties(p, 2)
+        print
 
     def solve_overspecified(self):
         a = [
@@ -66,6 +155,37 @@ class MyTestCase(unittest.TestCase):
         ]
         b = [2, 1, 2]
 
+    def test_binary_to_probability_matrix(self):
+        arr = pd.DataFrame([[None, True],[None, None],[None, None],[None, None]])
+        np.testing.assert_array_equal(binary_to_probability_matrix(arr), np.array(([[0,0,np.nan, np.nan],
+                                            [np.nan, np.nan, np.nan, np.nan],
+                                            [np.nan, np.nan, np.nan, np.nan],
+                                            [np.nan, np.nan, np.nan, np.nan]]),dtype=object))
+        
+    def test_solve_probability_matrix2(self):
+        p = pd.DataFrame.from_dict({0: {0: np.nan, 1: np.nan, 2: np.nan, 3: np.nan, 4: np.nan, 5: np.nan, 6: np.nan, 7: np.nan},
+         1: {0: 0, 1: np.nan, 2: np.nan, 3: np.nan, 4: np.nan, 5: np.nan, 6: np.nan, 7: np.nan},
+         2: {0: np.nan, 1: np.nan, 2: np.nan, 3: 0, 4: np.nan, 5: np.nan, 6: np.nan, 7: np.nan},
+         3: {0: 0, 1: np.nan, 2: np.nan, 3: 0, 4: np.nan, 5: np.nan, 6: np.nan, 7: np.nan},
+         4: {0: np.nan, 1: np.nan, 2: np.nan, 3: np.nan, 4: np.nan, 5: np.nan, 6: np.nan, 7: np.nan},
+         5: {0: 0, 1: np.nan, 2: np.nan, 3: np.nan, 4: np.nan, 5: np.nan, 6: np.nan, 7: np.nan},
+         6: {0: np.nan, 1: np.nan, 2: np.nan, 3: 0, 4: np.nan, 5: np.nan, 6: np.nan, 7: np.nan},
+         7: {0: 0, 1: np.nan, 2: np.nan, 3: 0, 4: np.nan, 5: np.nan, 6: np.nan, 7: np.nan}})
+        solve_probability_matrix(p)
+
+    def test_solve_probability_matrix3(self):
+        p = pd.DataFrame.from_dict({0: {0:np.nan, 1: 0, 2:np.nan, 3:np.nan, 4:np.nan, 5:np.nan, 6:np.nan, 7:np.nan}, 1: {0: 0, 1:np.nan, 2:np.nan, 3:np.nan, 4:np.nan, 5:np.nan, 6:np.nan, 7:np.nan}, 2: {0:np.nan, 1: 0, 2:np.nan, 3: 0, 4:np.nan, 5:np.nan, 6:np.nan, 7:np.nan}, 3: {0: 0, 1:np.nan, 2:np.nan, 3: 0, 4:np.nan, 5:np.nan, 6:np.nan, 7:np.nan}, 4: {0:np.nan, 1: 0, 2:np.nan, 3:np.nan, 4:np.nan, 5:np.nan, 6:np.nan, 7:np.nan}, 5: {0: 0, 1:np.nan, 2:np.nan, 3:np.nan, 4:np.nan, 5:np.nan, 6:np.nan, 7:np.nan}, 6: {0:np.nan, 1: 0, 2:np.nan, 3: 0, 4:np.nan, 5:np.nan, 6:np.nan, 7:np.nan}, 7: {0: 0, 1:np.nan, 2:np.nan, 3: 0, 4:np.nan, 5:np.nan, 6:np.nan, 7:np.nan}}
+)
+        solve_probability_matrix(p)
+
+    def test_solve_inequalities1(self):
+        tau0 = sympy.symbols('tau0', real=True)
+        x = sympy.Tuple(2, tau0 + 1, -tau0, 4, 1 - tau0, tau0)
+        upper = (2,1,1,5,2,2)
+        sol, syms, x_eval = solve_vector_bounds(x, upper)
+        expected = [2,1,0,4,1,0]
+        np.testing.assert_array_almost_equal(x_eval, expected)
+        print
 
 if __name__ == '__main__':
     unittest.main()

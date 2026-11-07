@@ -1,11 +1,19 @@
 import itertools
+import logging
 import math
 from functools import lru_cache
-import pandas as pd
-from permutation import Permutation
-import inequality_solving
+
 import numpy as np
+import pandas as pd
+import pynauty
+import scipy as sp
 import sympy
+from permutation import Permutation
+
+import inequality_solving
+
+log = logging.getLogger(__name__)
+
 
 def decimal_to_binary_arr(n, n_bits):
     '''LSB first, matching make_full: column k holds bit k of the bottle code'''
@@ -20,7 +28,6 @@ def make_full(n_rows, n_cols, order=0):
     df = pd.DataFrame([[i // (2 ** n) % 2 for i in range(n_rows)] for n in range(n_cols)]).T
     if order:
         n = math.factorial(n_rows)
-        print(n, 'possible permutations')
         # get seed in range
         order = order % n
         # use the order as the Lehmer code to get a unique permutation
@@ -32,8 +39,8 @@ def make_full(n_rows, n_cols, order=0):
 
 
 def permutation_generator(n_rows, n_cols):
-    # faster for generating all permutations
-    df_original = pd.DataFrame([[i // (2 ** n) % 2 for i in range(n_rows)] for n in range(n_cols)]).T # change this to make full
+    '''yields every row permutation of make_full(n_rows, n_cols), with the row order used'''
+    df_original = make_full(n_rows, n_cols)
     for row_order in itertools.permutations(range(n_rows)):
         df = df_original.loc[list(row_order)]
         index = df.index[:]
@@ -54,7 +61,7 @@ def brute_force_probabilities(arr):
             i += 1
             for row, col in zip(p.index,index):
                 p.loc[row, col] += 1
-    return p.astype(object).applymap(sympy.core.numbers.Rational)/i
+    return p.astype(object).map(sympy.core.numbers.Rational)/i
 
 
 def fill_from_constraints(col_zeros, matrix):
@@ -69,17 +76,17 @@ def fill_from_constraints(col_zeros, matrix):
     cols = (new_matrix == 1).sum() == np.subtract(new_matrix.shape[0], col_zeros)
     if cols.any():
         new_matrix[cols.index[cols]] = new_matrix[cols.index[cols]].fillna(False)
-    # if a row has n-1 entries and matches a row that is full, infer the last bit
-    # good difficult interview question
+    # if a row has one missing bit and filling it one way would duplicate a fully known row
+    # (codes are unique), the missing bit must be the other value
     rows = matrix.isnull().sum(axis=1)
     # get all the rows that are full that can be used to infer the missing bit
     zero_missing = matrix[rows == False]
     for i, row in matrix[rows == True].iterrows():
-        # it's easy and partially vectorized to just check matches as opposed to using a trie or something
-        # is the mising bit a one?
+        # checking matches directly is simple and partly vectorized; a trie would scale better
+        # would a missing 1 duplicate a known row? then it's a 0
         if (zero_missing == row.fillna(True)).all(1).any():
             new_matrix.loc[row.name].fillna(False, inplace=True)
-        # is the mising bit a one?
+        # would a missing 0 duplicate a known row? then it's a 1
         elif (zero_missing == row.fillna(False)).all(1).any():
             new_matrix.loc[row.name].fillna(True, inplace=True)
 
@@ -90,7 +97,7 @@ def fill_from_constraints(col_zeros, matrix):
 
 
 def binary_to_probability_matrix(arr):
-    '''todo test this round trip'''
+    '''bottles x codes grid: 0 where a measured bit rules the code out, NaN where it's still possible'''
     binary = make_full(*arr.shape)
     p = pd.DataFrame(index=arr.index, columns=arr.index)
     for i in p.index:
@@ -101,63 +108,7 @@ def binary_to_probability_matrix(arr):
     return p
 
 
-def append_equalities(eqn, a, b):
-    for i, row in eqn.iterrows():
-        # if it's all nulls, skip it
-        if row.isnull().all():
-            continue
-        null_cols = row.isnull().index[row.isnull()]
-        for idx in range(len(null_cols) - 1):
-            # set the adjacent values equal
-            new_row_idx = len(a) + 1
-            a.loc[new_row_idx] = 0
-            a.loc[new_row_idx, (i, null_cols[
-                idx])] = 1  # len(null_cols[idx]) # TODO make these the number of entries i think
-            a.loc[new_row_idx, (i, null_cols[idx + 1])] = -1  # len(null_cols[idx+1])
-            b = list(b) + [0]  # len(i) * (len(null_cols[idx]) + len(null_cols[idx+1]))]
-    return a, b
-
-import networkx as nx
-# from networkx.algorithms.isomorphism import GraphMatcher
-
-def recursive_merge(G):
-    def merge_automorphic_nodes(G):
-        auts = nx.algorithms.isomorphism.GraphMatcher(G, G)
-        auts_list = list(auts.isomorphisms_iter())
-        # Compute node orbits
-        orbits = []
-        seen = set()
-        for a in auts_list:
-            for v in G.nodes:
-                if v not in seen:
-                    orbit = {v2 for v2, v1 in a.items() if a[v2] == v}
-                    if orbit:
-                        orbits.append(orbit)
-                        seen |= orbit
-        # Merge nodes in same orbit
-        merged = nx.Graph()
-        for i, orbit in enumerate(orbits):
-            merged.add_node(i)
-        for i, orbit_i in enumerate(orbits):
-            for j, orbit_j in enumerate(orbits):
-                if i != j and any(G.has_edge(u, v) for u in orbit_i for v in orbit_j):
-                    merged.add_edge(i, j)
-        return merged
-
-    # G = nx.path_graph(6)
-    n=0
-    while True:
-        new_G = merge_automorphic_nodes(G)
-        if len(new_G) == len(G):
-            break
-        G = new_G
-        n+=1
-    print('after iterations',n, G.nodes, G.edges)
-    return G
-
-
-import scipy as sp
-def find_automorphisms(a, b): # TODO make simple unit test
+def find_automorphisms(a, b):
     '''indexed by a columns.
 
     Returns the *generators* of the automorphism group of the column-overlap graph (A^T A), as
@@ -165,7 +116,6 @@ def find_automorphisms(a, b): # TODO make simple unit test
     exactly the orbits of its generators -- so this gives the same result as listing every
     automorphism, without the exponential blow-up (networkx VF2 enumerated all of them and hung
     for 10+ minutes on symmetric states).'''
-    import pynauty
     adj = np.dot(a.T, a).astype(bool)
     np.fill_diagonal(adj, False)  # every used column overlaps itself; carries no information
     n = adj.shape[0]
@@ -180,13 +130,13 @@ def find_automorphisms(a, b): # TODO make simple unit test
                 new[a.columns[k]] = a.columns[v]
         if new:
             automorphisms.append(new)
-    print(f"Found {len(automorphisms)} automorphism generators, {automorphisms}")
+    log.debug('found %d automorphism generators: %s', len(automorphisms), automorphisms)
     return automorphisms
 
 
 def rank(a):
     rank = np.linalg.matrix_rank(a)
-    print(f'rank {rank} out of {a.shape[1]}')
+    log.debug('rank %d out of %d', rank, a.shape[1])
     return rank
 
 def matrix_aggregation(df):
@@ -197,17 +147,6 @@ def matrix_aggregation(df):
     eqn = pd.DataFrame(col_agg.index.to_list(), columns=row_agg.iloc[col_agg.index.names].values,
                        index=col_agg.values).T
     return eqn
-
-def merge_cols_for_equalities(a, col1, col_list):
-    '''adds values to co1 1 and deletes others'''
-    a[col1] += a[col_list].sum(1)
-    return a.drop(columns=col_list)
-
-def set_col_to_value(a, b, col, value):
-    '''substitutes value for col in linear system a, b'''
-    b -= a[col] * value
-    del a[col]
-    return a, b
 
 def get_upper_bounds(a,b):
     return [int(b.where(a[col].values).min()) for col in a]
@@ -227,15 +166,15 @@ def add_automorphic_constraints(a,b):
     for subset in ds.subsets():
         ss = list(subset)
         for i in range(1,len(subset)):
-            # make 2 inequality constraints to make an equality constraint, always constraining to the zeroth element
-            for j, k in ((0, i),):# ,(i,0):
-                # inefficiently add a row to a initialized as zeros
+            # equal per-cell probability: (cells in block j) * x_j - (cells in block k) * x_k = 0
+            for j, k in ((0, i),):
+                # append a zero row, then set the two entries (simple, not fast)
                 idx = str((ss[j],ss[k]))
                 a.loc[idx] = 0
-                a.loc[idx, ss[j]] = np.prod(tuple(map(len,ss[j]))) #
+                a.loc[idx, ss[j]] = np.prod(tuple(map(len,ss[j])))
                 a.loc[idx, ss[k]] = -np.prod(tuple(map(len,ss[k])))
                 b.append(0)
-    print(a)
+    log.debug('constraints with symmetry rows:\n%s', a)
     rank(a)
     return a, pd.Series(b, index=a.index)
 
@@ -245,7 +184,7 @@ def solve_probability_matrix(p):
 
     # aggregate to make block matrix
     eqn = matrix_aggregation(p)
-    print(eqn)
+    log.debug('aggregated blocks:\n%s', eqn)
     # make cols out of unknowns, where the column labels represent the original row and col indices
     eqn_stacked = eqn.stack(dropna=False)
     unknown_indices = eqn_stacked.index[eqn_stacked.isnull()]
@@ -258,11 +197,8 @@ def solve_probability_matrix(p):
                      index=equation_indices, dtype=int)
 
     original_rank = rank(a)
-    print(f'original rank {original_rank}')
     # because we aggregated the rows, and they originally sum to one, we need to count the number of rows that were added
     b = a.index.map(len)
-
-    # x0 = inequality_solving.solve_linear_system(a, b)
 
     # upper bound is the min b value that xi is involved with
     upper = get_upper_bounds(a, b)
@@ -274,10 +210,10 @@ def solve_probability_matrix(p):
     if inequality_solving.is_feasible(a_sym, b_sym, upper):
         a, b = a_sym, b_sym
     else:
-        print('automorphic constraints made the LP infeasible; solving without them')
+        log.debug('automorphic constraints made the LP infeasible; solving without them')
 
     new_rank = rank(a)
-    print(f'rank {original_rank} -> {new_rank} out of {a.shape[1]}')
+    log.debug('rank %d -> %d out of %d', original_rank, new_rank, a.shape[1])
     # the LP pins down whatever the constraints determine; everything else is filled with
     # the average of the extreme feasible solutions (a feasible, but not exact, estimate)
     fixed, x = inequality_solving.solve_lp(a, b, upper)
@@ -306,7 +242,7 @@ def fill_probability_matrix(p, x, unknown_indices):
     return p_filled
 
 
-def probability_matrix_to_binary_probabilties(p,n_bits):
+def probability_matrix_to_binary_probabilities(p,n_bits):
     '''gives the probability of each bit being 1
     could vectorize this'''
     binary_probabilities = pd.DataFrame(0, index=p.index, columns=range(n_bits), dtype=float)

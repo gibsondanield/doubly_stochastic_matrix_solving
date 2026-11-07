@@ -1,28 +1,34 @@
 """
-Vector inequality solver for one or more scalar symbols using SymPy.
+Linear-programming helpers for the probability grid, plus the earlier symbolic solver.
 
-Behavior:
-- Builds the system 0 <= x[i] <= upper[i].
-- If there is a single unique solution for all free symbols, return it and
-  substitute into x to produce x_eval.
-- If there are zero solutions, raise NoSolutionError.
-- If there are multiple solutions, raise MultipleSolutionsError but also print
-  insights about what is known.
+LP (used by matrix_utilities.solve_probability_matrix):
+- is_feasible: does a x = b, 0 <= x <= upper have any solution?
+- solve_lp: per-variable min/max over that polytope, which variables are pinned down, and a
+  feasible fill-in (the mean of the extreme points).
 
-Insights in multiple-solution cases:
-- Variables uniquely determined by zero-width constraints.
-- Ranges (bounds) of each remaining variable implied by inequalities.
-- Detected dependent relationships among variables.
-
-Scope:
-- Exact uniqueness detection is fully supported for the univariate case.
-- For multivariate inputs, uniqueness is inferred from zero-width constraints.
-- Integer or rational coefficients are handled exactly.
+Symbolic (the first approach, kept for reference; see test_solve_inequalities1):
+- solve_vector_bounds: for a vector x of SymPy expressions, solve 0 <= x[i] <= upper[i].
+  Returns the unique solution if there is one, raises NoSolutionError if there are none, and
+  MultipleSolutionsError (after logging what is known) if there are several. Exact uniqueness
+  detection is supported for one free symbol; for several, uniqueness is inferred from
+  zero-width constraints.
 """
-import sympy
+import logging
+
 import numpy as np
+import sympy
 from scipy.optimize import linprog
-import pandas as pd
+
+log = logging.getLogger(__name__)
+
+
+class NoSolutionError(Exception):
+    pass
+
+
+class MultipleSolutionsError(Exception):
+    pass
+
 
 def is_feasible(a, b, upper):
     bounds = [(0, up) for up in upper]
@@ -54,69 +60,14 @@ def solve_lp(a, b, upper):
         vertices += [res_min.x, res_max.x]
         if abs(res_min.fun + res_max.fun) < 1e-5:
             fixed[s] = res_min.fun
-            print('solved for', s, res_min.fun)
+            log.debug('solved for %s: %s', s, res_min.fun)
         else:
-            print(s, 'interval', res_min.fun, -res_max.fun)
-    print('ran lp', fixed)
+            log.debug('%s in interval [%s, %s]', s, res_min.fun, -res_max.fun)
+    log.debug('LP fixed %d of %d variables', len(fixed), a.shape[1])
     return fixed, np.mean(vertices, axis=0)
 
 
-def solve_vector_bounds_linprog(x, upper):
-    """Alternative solver using scipy.optimize.linprog to find feasible bounds numerically."""
-    syms = _sorted_free_symbols(sympy.Tuple(*x))
-    if not syms:
-        return np.array(x, dtype=float)
-
-    # Convert symbolic expressions to linear form Ax <= b, -x <= 0.
-    A = []
-    b = []
-    for xi, ui in zip(x, upper):
-        expr = sympy.expand(xi)
-        coeffs = [expr.coeff(s) for s in syms]
-        const = expr - sum(c * s for c, s in zip(coeffs, syms))
-        # xi >= 0 => -coeffs·syms <= const
-        A.append([-float(c) for c in coeffs])
-        b.append(float(const))
-        # xi <= ui => coeffs·syms <= ui - const
-        A.append([float(c) for c in coeffs])
-        b.append(float(ui - const))
-
-    # Initialize bounds (-inf, inf) for each variable.
-    bounds = [(None, None)] * len(syms)
-
-    # Solve two LPs for each symbol to find min and max feasible values.
-    results = {}
-    for i, s in enumerate(syms):
-        c = np.zeros(len(syms))
-        c[i] = 1.0
-        res_max = linprog(-c, A_ub=A, b_ub=b, bounds=bounds, method='highs')
-        res_min = linprog(c, A_ub=A, b_ub=b, bounds=bounds, method='highs')
-        if res_min.success and res_max.success:
-            results[s] = (res_min.fun, -res_max.fun)
-        else:
-            results[s] = (None, None)
-    return results
-
-def solve_linear_system(A, b):
-    # convert to sympy matrices
-    A = sympy.Matrix(A)
-    b = sympy.Matrix(b)
-    sol = sympy.linsolve((A, b))
-    print("Solution:", sol)
-    if len(sol) == 0:
-        raise NoSolutionError(f'not one solution {sol}')
-    if len(sol) > 1:
-        raise MultipleSolutionsError(f'multiple solutions {sol}')
-    return sol.args[0]
-
-
-class NoSolutionError(Exception):
-    pass
-
-
-class MultipleSolutionsError(Exception):
-    pass
-
+# --- symbolic solver ---------------------------------------------------------------------------
 
 def _sorted_free_symbols(expr):
     return tuple(sorted(expr.free_symbols, key=lambda s: s.sort_key()))
@@ -176,6 +127,7 @@ def _try_unique_solution_multivariate(x, upper):
 
 
 def _analyze_partial_constraints(x, upper):
+    '''Logs what can be said when there is more than one solution.'''
     syms = _sorted_free_symbols(sympy.Tuple(*x))
     eqs = _implied_equalities_from_zero_width(x, upper)
     known_vals = {}
@@ -183,33 +135,11 @@ def _analyze_partial_constraints(x, upper):
         known = sympy.solve(eqs, syms, dict=True)
         if known:
             known_vals = known[0]
-    print("\n[Insight] Zero-width equalities:")
-    for e in eqs:
-        print("   ", e)
-    print("[Insight] Known values:")
-    if known_vals:
-        for k, v in known_vals.items():
-            print(f"   {k} = {v}")
-    else:
-        print("   None uniquely determined.")
-
-    print("[Insight] Symbol ranges:")
-    for s in syms:
-        try:
-            lo, hi = sympy.solve_univariate_inequality(0 <= s, s, relational=False), \
-                     sympy.solve_univariate_inequality(s <= 1, s, relational=False)
-            print(f"   {s}: possible range subset of intersection({lo}, {hi})")
-        except Exception:
-            print(f"   {s}: range undetermined")
-
-    print("[Insight] Possible linear dependencies:")
-    try:
-        M, _ = sympy.linear_eq_to_matrix(_implied_equalities_from_zero_width(x, upper), syms)
-        print("   Rank:", utils.rank(), "/", len(syms))
-        if utils.rank() < len(syms):
-            print("   Some variables remain dependent or free.")
-    except Exception:
-        print("   Could not compute dependencies.")
+    log.info('zero-width equalities: %s', eqs or 'none')
+    log.info('known values: %s', known_vals or 'none uniquely determined')
+    if eqs:
+        M, _ = sympy.linear_eq_to_matrix(eqs, syms)
+        log.info('rank of implied equalities: %d / %d', M.rank(), len(syms))
 
 
 def solve_vector_bounds(x, upper):
@@ -236,9 +166,9 @@ def solve_vector_bounds(x, upper):
                 subs_dict = {s: val}
                 x_eval = sympy.Tuple(*[sympy.simplify(xi.subs(subs_dict)) for xi in x])
                 return sol, syms, x_eval
-            print("[Insight] Multiple discrete roots:", sol)
+            log.info('multiple discrete roots: %s', sol)
             raise MultipleSolutionsError("Multiple discrete solutions")
-        print("[Insight] Continuum of solutions:", sol)
+        log.info('continuum of solutions: %s', sol)
         raise MultipleSolutionsError("Continuum of solutions")
 
     if len(syms) > 1:
@@ -259,64 +189,3 @@ def solve_vector_bounds(x, upper):
         return sympy.FiniteSet(), syms, x_eval
 
     raise MultipleSolutionsError("Unhandled case")
-
-
-
-# if __name__ == "__main__":
-    # tau0, tau1 = sympy.symbols('tau0 tau1', real=True)
-    # x = sympy.Tuple(
-    #     tau0 + tau1 - 1,
-    #     -tau0 - tau1 + 2,
-    #     2,
-    #     tau1 + 1,
-    #     -tau0 - tau1 + 3,
-    #     tau0,
-    #     1 - tau1,
-    #     tau1,
-    # )
-    # upper = (2, 2, 5, 4, 3, 2, 2, 2)
-    # try:
-    #     solve_vector_bounds(x, upper)
-    #     print("Test 1 — should have raised MultipleSolutionsError")
-    # except MultipleSolutionsError:
-    #     print("Test 1 — multiple solutions as expected")
-    #
-    # tau0 = sympy.symbols('tau0', real=True)
-    # x = sympy.Tuple(2, tau0 + 1, -tau0, 4, 1 - tau0, tau0)
-    # upper = (2, 1, 1, 5, 2, 2)
-    # sol, syms, x_eval = solve_vector_bounds(x, upper)
-    # expected = [2, 1, 0, 4, 1, 0]
-    # np.testing.assert_array_almost_equal(np.array(x_eval, dtype=float), np.array(expected, dtype=float))
-    # print("Test 2 — unique solution detected and substituted")
-    #
-    # taus = sympy.symbols('tau0:9', real=True)
-    # tau0, tau1, tau2, tau3, tau4, tau5, tau6, tau7, tau8 = taus
-    # x = sympy.Tuple(
-    #     tau0 + tau1 + tau2 + tau4 + tau5 + tau7 + tau8 - 2,
-    #     -tau0 - tau7 + 1,
-    #     -tau1 - tau4 + 1,
-    #     -tau2 - tau5 - tau8 + 1,
-    #     1,
-    #     tau6 + tau7 + tau8,
-    #     tau3 + tau4 + tau5,
-    #     -tau3 - tau6 + 1,
-    #     -tau0 - tau1 - tau2 - tau4 - tau5 - tau7 - tau8 + 3,
-    #     tau0,
-    #     tau1,
-    #     tau2,
-    #     -tau3 - tau4 - tau5 + 1,
-    #     tau3,
-    #     tau4,
-    #     tau5,
-    #     -tau6 - tau7 - tau8 + 1,
-    #     tau6,
-    #     tau7,
-    #     tau8,
-    # )
-    # upper = (1,) * len(x)
-    # try:
-    #     solve_vector_bounds(x, upper)
-    #     print("Test 3 — should have raised MultipleSolutionsError")
-    # except MultipleSolutionsError:
-    #     print("Test 3 — multiple solutions as expected")
-

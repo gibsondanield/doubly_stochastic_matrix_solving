@@ -1,10 +1,15 @@
+import logging
+from abc import ABC
+
 import numpy as np
 import pandas as pd
-from abc import ABC
+
 from inequality_solving import NoSolutionError
 
 from matrix_utilities import make_empty, fill_from_constraints, binary_to_probability_matrix, solve_probability_matrix, \
-    probability_matrix_to_binary_probabilties, compute_matrix_entropy, exact_probability_matrix
+    probability_matrix_to_binary_probabilities, compute_matrix_entropy, exact_probability_matrix
+
+log = logging.getLogger(__name__)
 
 
 class MeasurementAlgorithmABC(ABC):
@@ -21,7 +26,7 @@ class MeasurementAlgorithmABC(ABC):
         ...
 
     def done(self):
-        '''returns True when algortithm has solved everything'''
+        '''returns True when algorithm has solved everything'''
         ...
 
 
@@ -32,11 +37,13 @@ class Random(MeasurementAlgorithmABC):
         self.n_detectors = n_detectors
         self.remaining = {(bottle, detector) for bottle in range(n_bottles) for detector in range(n_detectors)}
         self.arr = make_empty(n_bottles, n_detectors)
-        self.col_zeros = np.asarray([self.n_bottles / 2] * self.n_detectors, dtype=int)  # TODO move this to cellar
+        # every detector column is exactly half zeros: a property of the code set, known in advance
+        self.col_zeros = np.asarray([self.n_bottles / 2] * self.n_detectors, dtype=int)
 
     def next(self):
         '''returns bottle, detector for the next measurement'''
-        return self.remaining.pop()  # or maybe use np.random.choice for this
+        # order doesn't matter: with no inference, every cell gets measured
+        return self.remaining.pop()
 
     def update(self, bottle: int, detector: int, measurement: int):
         '''doesnt return anything, just gives the last measurement to the algorithm'''
@@ -44,13 +51,12 @@ class Random(MeasurementAlgorithmABC):
         self._update_remaining()
 
     def _update_remaining(self):
-        # remaining will be set of tuples of null values.
-        self.remaining = set(zip(*np.where(self.arr.isnull())))  # drops nulls
-        print(self.arr)
-        print('n remaining', len(self.remaining))
+        # every (bottle, detector) cell that is still unknown
+        self.remaining = set(zip(*np.where(self.arr.isnull())))
+        log.debug('%d cells remaining', len(self.remaining))
 
     def done(self):
-        '''returns True when algortithm has solved everything'''
+        '''returns True when algorithm has solved everything'''
         if self.arr.isnull().any().any():
             return False
         return True
@@ -70,7 +76,7 @@ class GreedyMaxExpEntropy(Random):
 
     def __init__(self, n_bottles, n_detectors):
         super().__init__(n_bottles, n_detectors)
-        # initialize probability matrix to have uniform priors
+        # no measurements yet: every bottle could have every code
         self.probability_matrix = binary_to_probability_matrix(self.arr)
 
     def next(self):
@@ -117,15 +123,15 @@ class GreedyMaxExpEntropy(Random):
         self.arr[detector][bottle] = measurement
         # see if we've solved anything
         self.probability_matrix = self._solve()
-        binary_probabilities = probability_matrix_to_binary_probabilties(self.probability_matrix, self.n_detectors)
+        binary_probabilities = probability_matrix_to_binary_probabilities(self.probability_matrix, self.n_detectors)
         # if this solved anything outright, update arr with the zeros and ones.
         # The LP fill is an average of extreme feasible points, so its support is every cell that can be
         # nonzero in *some* consistent assignment: a bit at probability 0/1 here is genuinely forced.
         self.arr[np.isclose(binary_probabilities, 0, atol=1e-9)] = False
         self.arr[np.isclose(binary_probabilities, 1, atol=1e-9)] = True
-        # log entropy values
-        print('remaining entropy', compute_matrix_entropy(self.probability_matrix))
+        log.debug('remaining entropy %.3f', compute_matrix_entropy(self.probability_matrix))
         self._update_remaining()
+
 
 class GreedyMinExpEntropy(GreedyMaxExpEntropy):
     '''Same scoring as GreedyMaxExpEntropy, but picks the LOWEST unweighted sum. That looks like
@@ -137,16 +143,18 @@ class GreedyMinExpEntropy(GreedyMaxExpEntropy):
 
 
 class GreedyMaxMinEntropy(GreedyMaxExpEntropy):
+    '''Picks the cell whose *lower* post-measurement entropy is highest, i.e. the measurement whose
+    better outcome still leaves the most uncertainty -- the most balanced worst case.'''
+
     def _decision(self, low_info_gain, high_info_gain):
-        # return the location of the highest low info gain
-        return low_info_gain.idxmax()
+        return low_info_gain.stack().idxmax()
 
 
 class GreedyMaxEntropy(GreedyMaxExpEntropy):
-    '''What decision gives us the highest minimum guaranteed information gain?'''
+    '''Picks the cell whose *higher* post-measurement entropy is highest.'''
+
     def _decision(self, low_info_gain, high_info_gain):
-        # return the location of the highest low info gain
-        return high_info_gain.idxmax()
+        return high_info_gain.stack().idxmax()
 
 
 
@@ -161,7 +169,7 @@ class GreedyClosestToHalf(GreedyMaxExpEntropy):
         self.probability_matrix = self._solve()
 
     def next(self):
-        bits = probability_matrix_to_binary_probabilties(self.probability_matrix, self.n_detectors)
+        bits = probability_matrix_to_binary_probabilities(self.probability_matrix, self.n_detectors)
         # sorted() makes ties break deterministically
         return min(sorted(self.remaining), key=lambda bd: abs(bits.loc[bd[0], bd[1]] - 0.5))
 

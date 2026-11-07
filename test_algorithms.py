@@ -1,31 +1,31 @@
 import unittest
+
 import numpy as np
-from inequality_solving import *
-from main import *
+import pandas as pd
+import sympy
+
+from inequality_solving import solve_vector_bounds
+from main import Cellar, run
+from algorithms import Random, RandomWithConstraintSolving
 from matrix_utilities import make_empty, make_full, brute_force_probabilities, fill_from_constraints, \
-    binary_to_probability_matrix, \
-    solve_probability_matrix, probability_matrix_to_binary_probabilties, entropy, compute_matrix_entropy
+    binary_to_probability_matrix, solve_probability_matrix, probability_matrix_to_binary_probabilities, entropy, \
+    compute_matrix_entropy, exact_probability_matrix
 
+# The LP only determines a cell when the constraints (plus symmetry) pin it down; elsewhere it returns a
+# feasible but inexact fill-in. These brute-force comparisons document that limitation (see the blog
+# post); exact_probability_matrix is the method that matches brute force in general.
+LP_IS_APPROXIMATE = unittest.expectedFailure
 
-# def brute_force_vs_calculation_from_arr(pr):
-#     pr = binary_to_probability_matrix(arr)
-#     p1 = solve_probability_matrix(pr)
-#     p = brute_force_probabilities(arr)
-#     print(p)
-#     np.testing.assert_array_almost_equal(p, p1)
 
 def brute_force_vs_calculation_from_arr(arr):
-    pr = binary_to_probability_matrix(arr)
-    p1 = solve_probability_matrix(pr)
+    p1 = solve_probability_matrix(binary_to_probability_matrix(arr))
     p = brute_force_probabilities(arr)
-    print(p)
-    print(p1)
     np.testing.assert_array_almost_equal(p, p1)
 
 
-class MyTestCase(unittest.TestCase):
+class TestAlgorithms(unittest.TestCase):
     def test_make_empty(self):
-        self.assertEqual(True, make_empty(4, 4).isnull().all().all())  # add assertion here
+        self.assertEqual(True, make_empty(4, 4).isnull().all().all())
 
     def test_make_full(self):
         np.testing.assert_array_equal(make_full(4, 2), [[0, 0],
@@ -92,6 +92,7 @@ class MyTestCase(unittest.TestCase):
                     [1 / 6, 1 / 6, 1 / 3, 1 / 3]]
         np.testing.assert_array_almost_equal(p.values, expected)
 
+    @LP_IS_APPROXIMATE
     def test_brute_force_probabilities2(self):
         arr = make_empty(8, 3)
         arr.loc[0, 1] = False
@@ -109,6 +110,7 @@ class MyTestCase(unittest.TestCase):
         # automorphism makes this unsolvable without increasing rank
         brute_force_vs_calculation_from_arr(arr)
 
+    @LP_IS_APPROXIMATE
     def test_brute_force_probabilities4(self):
         arr = make_empty(8, 3)
         arr.loc[0, 1] = False
@@ -116,6 +118,7 @@ class MyTestCase(unittest.TestCase):
         arr.loc[2, 0] = False
         brute_force_vs_calculation_from_arr(arr)
 
+    @LP_IS_APPROXIMATE
     def test_brute_force_probabilities5(self):
         arr = make_empty(8, 3)
         arr.loc[0, 1] = False
@@ -126,6 +129,7 @@ class MyTestCase(unittest.TestCase):
         arr.loc[5, 2] = False
         brute_force_vs_calculation_from_arr(arr)
 
+    @LP_IS_APPROXIMATE
     def test_brute_force_probabilities6(self):
         arr = make_empty(8, 3)
         arr.loc[0, 1] = False
@@ -138,12 +142,26 @@ class MyTestCase(unittest.TestCase):
         arr.loc[7, 1] = True
         brute_force_vs_calculation_from_arr(arr)
 
-    def test_probability_matrix_to_binary_probabilties(self):
+    def test_exact_probabilities_match_brute_force(self):
+        cases = [{(0, 1): False, (1, 2): False},
+                 {(0, 1): False, (0, 2): False, (1, 1): False, (1, 2): False, (2, 1): False},
+                 {(0, 1): False, (1, 2): False, (2, 0): False},
+                 {(0, 1): False, (1, 2): False, (2, 0): False, (3, 0): False, (4, 1): False, (5, 2): False},
+                 {(0, 1): False, (1, 2): False, (2, 0): False, (3, 0): False, (4, 1): False, (5, 2): False,
+                  (6, 0): True, (7, 1): True}]
+        for obs in cases:
+            arr = make_empty(8, 3)
+            for (r, c), v in obs.items():
+                arr.loc[r, c] = v
+            np.testing.assert_array_almost_equal(exact_probability_matrix(binary_to_probability_matrix(arr)),
+                                                 brute_force_probabilities(arr).astype(float))
+
+    def test_probability_matrix_to_binary_probabilities(self):
         p = pd.DataFrame([[.5, .5, 0, 0],
                           [1 / 6, 1 / 6, 1 / 3, 1 / 3],
                           [1 / 6, 1 / 6, 1 / 3, 1 / 3],
                           [1 / 6, 1 / 6, 1 / 3, 1 / 3]])
-        binary = probability_matrix_to_binary_probabilties(p, 2)
+        binary = probability_matrix_to_binary_probabilities(p, 2)
         # LSB-first (same convention as make_full): bit 0 = p[:,1] + p[:,3], bit 1 = p[:,2] + p[:,3]
         expected = pd.DataFrame({0: {0: 0.5, 1: 0.5, 2: 0.5, 3: 0.5}, 1: {0: 0.0, 1: 0.6666666666666666, 2: 0.6666666666666666, 3: 0.6666666666666666}})
         pd.testing.assert_frame_equal(binary, expected)
@@ -163,7 +181,7 @@ class MyTestCase(unittest.TestCase):
         cellar = Cellar(n, seed=7).arr.reset_index(drop=True)
         codes = cellar.astype(int).values @ (1 << np.arange(n))
         p = pd.DataFrame(np.eye(2 ** n)[codes])
-        np.testing.assert_array_equal(probability_matrix_to_binary_probabilties(p, n).values, cellar.values)
+        np.testing.assert_array_equal(probability_matrix_to_binary_probabilities(p, n).values, cellar.values)
 
     def test_binary_to_probability_matrix(self):
         arr = pd.DataFrame([[None, True], [None, None], [None, None], [None, None]])

@@ -1,7 +1,11 @@
 import unittest
-from matrix_utilities import *
 
-class MyTestCase(unittest.TestCase):
+import numpy as np
+import pandas as pd
+
+from matrix_utilities import approx_choices, bregman_minc, permanent_upper_bound
+
+class TestPermanentBound(unittest.TestCase):
 
     def test_3x3_all_ones(self):
         """Test 3x3 all-ones matrix - bound should equal actual permanent of 6"""

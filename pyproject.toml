@@ -1,12 +1,11 @@
 [project]
-name = "pythonproject"
+name = "wine-cellar"
 version = "0.1.0"
-description = "Add your description here"
+description = "How few measurements does it take to identify every bottle in the wine-cellar riddle? LP, permanent and greedy strategies."
 requires-python = ">=3.12"
 dependencies = [
     "ipython>=9.6.0",
     "matplotlib>=3.10.8",
-    "networkx>=3.5",
     "numpy>=2.3.3",
     "pandas>=2.3.3",
     "pandas-stubs==2.3.2.250926",

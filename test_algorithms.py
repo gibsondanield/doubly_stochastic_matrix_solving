@@ -44,6 +44,23 @@ class TestAlgorithms(unittest.TestCase):
         arr[0][0] = pd.NA
         np.testing.assert_array_equal(fill_from_constraints([2, 2], arr), make_full(4, 2))
 
+    def test_fill_from_constraints_row_rule(self):
+        # row 3 is [?, 1]; a 0 would duplicate known row [0, 1], so it must be 1 (column rule disabled)
+        arr = make_full(4, 2).astype('boolean')
+        arr.loc[3, 0] = pd.NA
+        self.assertEqual(fill_from_constraints([99, 99], arr).loc[3, 0], True)
+
+    def test_fill_from_constraints_sound_and_complete(self):
+        '''never infers a wrong bit, and one call reaches the fixpoint'''
+        rng = np.random.default_rng(0)
+        for seed in range(50):
+            truth = Cellar(3, seed=seed).arr
+            arr = truth.astype('boolean').copy()
+            arr[rng.random(arr.shape) < 0.6] = pd.NA
+            filled = fill_from_constraints([4, 4, 4], arr)
+            self.assertFalse((filled.notna() & (filled != truth)).to_numpy().any())
+            self.assertTrue(filled.equals(fill_from_constraints([4, 4, 4], filled)))
+
     def test_entropy_full(self):
         for n in range(2, 10):
             self.assertEqual(compute_matrix_entropy(make_full(2 ** n, n)), 0)

@@ -11,7 +11,7 @@ one bottle. The goal is to identify every bottle in as few measurements as possi
 | strategy | mean measurements |
 |---|---|
 | measure everything | 24.00 |
-| constraint propagation | 19.55 |
+| constraint propagation | 17.15 |
 | greedy, unweighted entropy score | 15.90 |
 | **greedy, measure the bit closest to 50/50, exact probabilities** | **15.43** (200 cellars) |
 | floor: log<sub>2</sub>(8!) | 15.3 |

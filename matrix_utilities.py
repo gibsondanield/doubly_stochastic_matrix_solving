@@ -65,33 +65,34 @@ def brute_force_probabilities(arr):
 
 
 def fill_from_constraints(col_zeros, matrix):
-    '''human-usable logic: infers missing values from column constraints'''
+    '''human-usable logic: infers missing bits from the column counts and from codes being unique,
+    repeating until nothing more can be inferred'''
     new_matrix = matrix.copy()
-    # count each col with missing values
-    cols = (matrix == 0).sum() == col_zeros
-    # if a column has the maximum number of zeros, the rest must be ones
-    if cols.any():
-        new_matrix[cols.index[cols]] = matrix[cols.index[cols]].fillna(True)
+    col_zeros = np.asarray(col_zeros)
+    # if a column already has all its zeros, the rest must be ones
+    cols = new_matrix.columns[(new_matrix == False).sum().to_numpy() == col_zeros]
+    for c in cols:
+        new_matrix[c] = new_matrix[c].fillna(True)
     # vice versa
-    cols = (new_matrix == 1).sum() == np.subtract(new_matrix.shape[0], col_zeros)
-    if cols.any():
-        new_matrix[cols.index[cols]] = new_matrix[cols.index[cols]].fillna(False)
+    cols = new_matrix.columns[(new_matrix == True).sum().to_numpy() == len(new_matrix) - col_zeros]
+    for c in cols:
+        new_matrix[c] = new_matrix[c].fillna(False)
     # if a row has one missing bit and filling it one way would duplicate a fully known row
     # (codes are unique), the missing bit must be the other value
-    rows = matrix.isnull().sum(axis=1)
-    # get all the rows that are full that can be used to infer the missing bit
-    zero_missing = matrix[rows == False]
-    for i, row in matrix[rows == True].iterrows():
+    missing = new_matrix.isna().sum(axis=1)
+    known = new_matrix[missing == 0]
+    for i, row in new_matrix[missing == 1].iterrows():
         # checking matches directly is simple and partly vectorized; a trie would scale better
         # would a missing 1 duplicate a known row? then it's a 0
-        if (zero_missing == row.fillna(True)).all(1).any():
-            new_matrix.loc[row.name].fillna(False, inplace=True)
+        if (known == row.fillna(True)).all(1).any():
+            new_matrix.loc[i] = row.fillna(False)
         # would a missing 0 duplicate a known row? then it's a 1
-        elif (zero_missing == row.fillna(False)).all(1).any():
-            new_matrix.loc[row.name].fillna(True, inplace=True)
+        elif (known == row.fillna(False)).all(1).any():
+            new_matrix.loc[i] = row.fillna(True)
 
-    # if there is a change, run again
-    if (new_matrix != matrix).all().all():
+    # each new bit can enable more inferences, so repeat until nothing changes.
+    # (equals() treats missing == missing; elementwise != would count every NA as a change)
+    if not new_matrix.equals(matrix):
         return fill_from_constraints(col_zeros, new_matrix)
     return new_matrix
 

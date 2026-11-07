@@ -1,5 +1,6 @@
 import itertools
 import math
+from functools import lru_cache
 import pandas as pd
 from permutation import Permutation
 import inequality_solving
@@ -7,10 +8,8 @@ import numpy as np
 import sympy
 
 def decimal_to_binary_arr(n, n_bits):
-    arr = np.zeros(n_bits, dtype=bool)
-    for i, v in enumerate(reversed(bin(n)[2:])):
-        arr[-i - 1] = v == '1'
-    return arr
+    '''LSB first, matching make_full: column k holds bit k of the bottle code'''
+    return np.array([(n >> k) & 1 for k in range(n_bits)], dtype=bool)
 
 
 def make_empty(n_rows, n_cols):
@@ -159,29 +158,29 @@ def recursive_merge(G):
 
 import scipy as sp
 def find_automorphisms(a, b): # TODO make simple unit test
-    '''indexed by a columns'''
-    import networkx as nx
-    from networkx.algorithms.isomorphism import GraphMatcher
-    G = nx.from_numpy_array(np.dot(a.T, a).astype(bool), )
-    # use upper as proxy for similarity
-    # for i, col in enumerate(a.columns):
-    #     for value in b.where(a[col].astype(bool)):
-    #         G.add_edge(i, str(value))
-    gm = recursive_merge(G)
-    matcher = GraphMatcher(G, G)
+    '''indexed by a columns.
+
+    Returns the *generators* of the automorphism group of the column-overlap graph (A^T A), as
+    {col: col} mappings. Callers only union these into orbits, and the orbits of a group are
+    exactly the orbits of its generators -- so this gives the same result as listing every
+    automorphism, without the exponential blow-up (networkx VF2 enumerated all of them and hung
+    for 10+ minutes on symmetric states).'''
+    import pynauty
+    adj = np.dot(a.T, a).astype(bool)
+    np.fill_diagonal(adj, False)  # every used column overlaps itself; carries no information
+    n = adj.shape[0]
+    g = pynauty.Graph(n, adjacency_dict={i: list(np.flatnonzero(adj[i])) for i in range(n)})
+    generators, *_ = pynauty.autgrp(g)
     automorphisms = []
-
-    for mapping in matcher.isomorphisms_iter():
+    for perm in generators:
         new = {}
-        for k, v in mapping.items():
-
-            # exclude the self and the b values that were turned to strings
-            if k!=v and type(k)==int and type(v)==int:
-                k,v = sorted([k,v])
+        for k, v in enumerate(perm):
+            if k != v:
+                k, v = sorted([k, v])
                 new[a.columns[k]] = a.columns[v]
         if new:
             automorphisms.append(new)
-    print(f"Found {len(automorphisms)} automorphisms, {automorphisms}")
+    print(f"Found {len(automorphisms)} automorphism generators, {automorphisms}")
     return automorphisms
 
 
@@ -268,60 +267,21 @@ def solve_probability_matrix(p):
     # upper bound is the min b value that xi is involved with
     upper = get_upper_bounds(a, b)
 
-    res = inequality_solving.solve_lp(a, b, upper)
-    # try:
-    #     *_, x_sol = inequality_solving.solve_vector_bounds(x0, upper)
-    # except:
-    #     print('no solution with inequalities')
-    #     print('linprog bounds', inequality_solving.solve_vector_bounds_linprog(x0, upper))
-    #     x_sol = None
-    #
-    # if x_sol is not None:
-    #     return fill_probability_matrix(p, x_sol, unknown_indices)
-    a, b = add_automorphic_constraints(a,b)
-    inequality_solving.solve_lp(a, b, upper)
-    print
-    while len(res) < a.shape[1]:
-        # substitute any results
-        for col, value in res.items():
-            a, b = set_col_to_value(a, b, col, value)
-        automorphisms = find_automorphisms(a, b)
-        # do this recursively by deleting columns and adding rows
-        ds = sp.cluster.hierarchy.DisjointSet()
-        for mapping in automorphisms:
-            # add equality constraint
-            for k,v in mapping.items():
-                ds.add(k)
-                ds.add(v)
-                ds.merge(k, v)
-                # remove from upper as well
-                upper.pop(a.columns.get_loc(v))
-                a = merge_cols_for_equalities(a, k, [v])
-            new_rank = np.linalg.matrix_rank(a)
-            print('new rank', new_rank)
-            res = inequality_solving.solve_lp(a, b, upper)
-            if len(res)>=a.shape[1]:
-                break
-            break
-        if len(automorphisms) == 0:
-            print('unknown rank deficiency NO AUTOMORPHISMS')
-        if len(res)==0:
-            raise
+    # Symmetry: automorphic blocks must carry equal per-cell probability. The A^T A graph
+    # heuristic can propose a "symmetry" that isn't one of the real system (it ignores b),
+    # which makes the LP infeasible -- in that case drop the extra rows rather than crash.
+    a_sym, b_sym = add_automorphic_constraints(a.copy(), b)
+    if inequality_solving.is_feasible(a_sym, b_sym, upper):
+        a, b = a_sym, b_sym
+    else:
+        print('automorphic constraints made the LP infeasible; solving without them')
 
     new_rank = rank(a)
     print(f'rank {original_rank} -> {new_rank} out of {a.shape[1]}')
-    res = inequality_solving.solve_lp(a, b, upper)
-    ...
-    # solve ax = b
-    # x = inequality_solving.solve_linear_system(a, b)
-    # if x.free_symbols:
-    #     print(list(zip(x0, x)))
-    #     print(list(zip(x, upper)))
-    #     print(pd.DataFrame(list(zip(*sympy.linear_eq_to_matrix(x, tuple(x.free_symbols)),upper))).drop_duplicates())
-    #     print('linprog bounds', inequality_solving.solve_vector_bounds_linprog(x, upper))
-    #     *_, x = inequality_solving.solve_vector_bounds(x, upper)
-    #
-    # return fill_probability_matrix(p, x, unknown_indices)
+    # the LP pins down whatever the constraints determine; everything else is filled with
+    # the average of the extreme feasible solutions (a feasible, but not exact, estimate)
+    fixed, x = inequality_solving.solve_lp(a, b, upper)
+    return fill_probability_matrix(p, x, unknown_indices)
 
 
 def fill_probability_matrix(p, x, unknown_indices):
@@ -365,3 +325,50 @@ def entropy(p):
 def compute_matrix_entropy(m: pd.DataFrame):
     '''computes total shannon entropy of probability matrix m '''
     return entropy(m.astype(float)).sum().sum()
+
+def permanent(m):
+    '''Exact permanent of a small 0/1 (or integer) matrix by Ryser's formula: O(2^n n^2).
+    For a 0/1 matrix this counts its perfect matchings, i.e. the consistent arrangements.
+    Intermediate products can exceed int64 from n = 16 (16^16 = 2^64), but numpy int64 wraps
+    modulo 2^64, so the signed sum is still exact as long as the permanent itself fits
+    (always true for 0/1 matrices up to n = 20, since perm <= n!).'''
+    m = np.asarray(m, dtype=np.int64)
+    n = m.shape[0]
+    if n == 0:
+        return 1
+    subsets = (np.arange(1, 2 ** n)[:, None] >> np.arange(n)) & 1      # every nonempty column subset
+    row_sums = m @ subsets.T                                             # n x (2^n - 1)
+    signs = (-1) ** (n - subsets.sum(1))
+    return int((signs * row_sums.prod(0)).sum())
+
+
+def exact_probability_matrix(p):
+    '''P[i, j] = perm(M without row i, col j) / perm(M), where M marks the cells still allowed
+    (NaN in p). This is the uniform average over every consistent arrangement -- what
+    brute_force_probabilities computes, without enumerating permutations.'''
+    allowed = p.isna().to_numpy()
+    total = permanent(allowed)
+    if total == 0:
+        raise inequality_solving.NoSolutionError('no arrangement is consistent with the measurements')
+    out = np.zeros(allowed.shape)
+    for i, j in zip(*np.nonzero(allowed)):
+        out[i, j] = permanent(np.delete(np.delete(allowed, i, 0), j, 1)) / total
+    return pd.DataFrame(out, index=p.index, columns=p.columns)
+
+
+@lru_cache
+def approx_choices(n:int):
+    '''(n!)^(1/n): Bregman-Minc factor for a line with n nonzeros. A zero line has no
+    choices, so it contributes 0 and the bound correctly collapses to perm = 0.
+    not vectorized'''
+    n = int(n)
+    return math.factorial(n) ** (1 / n) if n else 0
+
+def bregman_minc(m):
+    '''computes over cols of m'''
+    return np.prod(m.sum().apply(approx_choices))
+
+
+def permanent_upper_bound(m:pd.DataFrame):
+    '''Uses the Bregman–Minc inequality to compute upper bound for the permanent(m)'''
+    return min(bregman_minc(m), bregman_minc(m.T))

@@ -144,10 +144,26 @@ class MyTestCase(unittest.TestCase):
                           [1 / 6, 1 / 6, 1 / 3, 1 / 3],
                           [1 / 6, 1 / 6, 1 / 3, 1 / 3]])
         binary = probability_matrix_to_binary_probabilties(p, 2)
-        expected = pd.DataFrame({0: {0: 0.0, 1: 0.6666666666666666, 2: 0.6666666666666666, 3: 0.6666666666666666}, 1: {0: 0.5, 1: 0.5, 2: 0.5, 3: 0.5}})
+        # LSB-first (same convention as make_full): bit 0 = p[:,1] + p[:,3], bit 1 = p[:,2] + p[:,3]
+        expected = pd.DataFrame({0: {0: 0.5, 1: 0.5, 2: 0.5, 3: 0.5}, 1: {0: 0.0, 1: 0.6666666666666666, 2: 0.6666666666666666, 3: 0.6666666666666666}})
         pd.testing.assert_frame_equal(binary, expected)
 
 
+
+    def test_bit_order_round_trip(self):
+        '''decimal_to_binary_arr must use the same (LSB-first) bit order as make_full, otherwise
+        bits inferred from the probability matrix land in the wrong detector column'''
+        from matrix_utilities import decimal_to_binary_arr
+        for n in range(1, 6):
+            full = make_full(2 ** n, n).astype(bool)
+            for i in range(2 ** n):
+                np.testing.assert_array_equal(decimal_to_binary_arr(i, n), full.loc[i].values)
+        # a known shuffled cellar -> permutation matrix -> bit probabilities gives the cellar back
+        n = 3
+        cellar = Cellar(n, seed=7).arr.reset_index(drop=True)
+        codes = cellar.astype(int).values @ (1 << np.arange(n))
+        p = pd.DataFrame(np.eye(2 ** n)[codes])
+        np.testing.assert_array_equal(probability_matrix_to_binary_probabilties(p, n).values, cellar.values)
 
     def test_binary_to_probability_matrix(self):
         arr = pd.DataFrame([[None, True], [None, None], [None, None], [None, None]])

@@ -24,31 +24,41 @@ import numpy as np
 from scipy.optimize import linprog
 import pandas as pd
 
-def solve_lp(a,b, upper):
-    # use both positive and negative to make equalities
-    # A = pd.concat([a,-a])
-    # B = pd.concat([pd.Series(b),-pd.Series(b)])
-    #`A = np.vstack((a, -a))` and `B = np.hstack((b, -b))`.
-    bounds = [[0,up] for up in upper]
-    # Solve two LPs for each symbol to find min and max feasible values.
-    results = {}
+def is_feasible(a, b, upper):
+    bounds = [(0, up) for up in upper]
+    return linprog(np.zeros(a.shape[1]), A_eq=np.asarray(a, float), b_eq=np.asarray(b, float),
+                   bounds=bounds, method='highs').success
+
+
+def solve_lp(a, b, upper):
+    '''For every variable, minimise and maximise it subject to a x = b, 0 <= x <= upper.
+
+    Returns (fixed, x_avg):
+      fixed  -- {column: value} for variables whose min == max (uniquely determined)
+      x_avg  -- the mean of all the min/max solution vertices. Being a convex combination of
+                feasible points it is itself feasible, so it is always a valid fill-in; for
+                fixed variables it equals the determined value.
+    '''
+    A = np.asarray(a, float)
+    B = np.asarray(b, float)
+    bounds = [(0, up) for up in upper]
+    fixed = {}
+    vertices = []
     for i, s in enumerate(a.columns):
-        c = np.zeros(a.shape[1])
+        c = np.zeros(A.shape[1])
         c[i] = 1.0
-        res_max = linprog(-c, A_eq=a, b_eq=b, bounds=bounds, method='highs')
-        res_min = linprog(c, A_eq=a, b_eq=b, bounds=bounds, method='highs')
-        if res_min.success and res_max.success:
-            if abs(res_min.fun + res_max.fun) <.00001:
-                results[s] = res_min.fun
-                print('solved for',s, res_min.fun)
-            else:
-                print(s, 'interval' ,res_min.fun, -res_max.fun)
+        res_max = linprog(-c, A_eq=A, b_eq=B, bounds=bounds, method='highs')
+        res_min = linprog(c, A_eq=A, b_eq=B, bounds=bounds, method='highs')
+        if not (res_min.success and res_max.success):
+            raise NoSolutionError(f'LP infeasible while bounding {s}: {res_min.message}')
+        vertices += [res_min.x, res_max.x]
+        if abs(res_min.fun + res_max.fun) < 1e-5:
+            fixed[s] = res_min.fun
+            print('solved for', s, res_min.fun)
         else:
-            print('failed to solve lp', s)
-            # raise
-            # results[s] = (None, None)
-    print('ran lp', results)
-    return results
+            print(s, 'interval', res_min.fun, -res_max.fun)
+    print('ran lp', fixed)
+    return fixed, np.mean(vertices, axis=0)
 
 
 def solve_vector_bounds_linprog(x, upper):
